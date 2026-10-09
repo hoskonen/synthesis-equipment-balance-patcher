@@ -1,6 +1,8 @@
 using Mutagen.Bethesda;
 using Mutagen.Bethesda.Synthesis;
 using Mutagen.Bethesda.Skyrim;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Plugins.Records;
 
 namespace EquipmentBalancePatcher;
 
@@ -38,7 +40,11 @@ public static class Program
                 .Select(context => (context.Record, context.ModKey)), state.Cancel);
         var inputs = state.LoadOrder.ListedOrder.Select(listing =>
             new InputPlugin(listing.ModKey.ToString(), listing.Enabled)).ToArray();
-        var report = InventoryAudit.Build(snapshots, inputs, settings, state.Cancel);
+        // The inventory already contains all winning equipment parents. Probe only absent keys to
+        // distinguish a link to another record type from a missing/unresolved link, without changing raw data.
+        string? MissingTemplateTargetStatus(string key) => state.LinkCache.TryResolve<IMajorRecordGetter>(FormKey.Factory(key), out var target)
+            ? target.IsDeleted ? "DeletedParent" : "WrongTypeParent" : null;
+        var report = InventoryAudit.Build(snapshots, inputs, settings, state.Cancel, MissingTemplateTargetStatus);
         var paths = ReportWriter.Write(report, output, state.Cancel);
         Console.WriteLine(ReportWriter.ConsoleSummary(report, paths));
         Console.WriteLine("[EBP lifecycle] Reports published; audit callback returning normally.");

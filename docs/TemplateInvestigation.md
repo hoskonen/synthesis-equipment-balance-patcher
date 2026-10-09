@@ -1,5 +1,7 @@
 # Equipment template investigation (v0.1b)
 
+This is the historical investigation. v0.1c implements the separate traversal/proposed-field prototype described in [TemplatePrototype.md](TemplatePrototype.md); engine-validated field inheritance remains unresolved.
+
 ## Evidence and limits
 
 The copied v0.1a report contains 6,095 direct templates: 3,423 WEAP and 2,672 ARMO. All 302 records defined by or won by RFM.esm in this report have **no direct template**. RFM is therefore useful for studying special/custom weapons, but this dataset supplies no RFM template chain to validate. Do not attribute its exclusions to inheritance.

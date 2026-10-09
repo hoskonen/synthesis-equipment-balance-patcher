@@ -2,13 +2,14 @@ namespace EquipmentBalancePatcher;
 
 public static class InventoryAudit
 {
-    public const string PatcherVersion = "0.1b";
-    public const string SchemaVersion = "2";
+    public const string PatcherVersion = "0.1e";
+    public const string SchemaVersion = "4";
     public const string ClassificationVersion = "2";
 
     public static AuditReport Build(IEnumerable<EquipmentSnapshot> snapshots, IEnumerable<InputPlugin> inputs,
-        Settings settings, CancellationToken cancel = default)
+        Settings settings, CancellationToken cancel = default, Func<string, string?>? missingTemplateTargetStatus = null)
     {
+        BalanceAudit.Validate(settings);
         var equipment = snapshots.OrderBy(s => s.RecordType, StringComparer.Ordinal)
             .ThenBy(s => s.FormKey, StringComparer.Ordinal).Select(snapshot =>
             {
@@ -48,11 +49,30 @@ public static class InventoryAudit
         var issues = equipment.SelectMany(e => e.Diagnostics.Select(d =>
             new ClassificationIssue(e.Snapshot.FormKey, e.Snapshot.RecordType, d.Code, d.Message)
             { Severity = d.Severity, Relevance = d.Relevance })).ToArray();
+        var resolver = new TemplateResolver(equipment.Select(e => e.Snapshot), settings.MaximumTemplateDepth, missingTemplateTargetStatus);
+        var templates = equipment.Where(e => e.Snapshot.Template is not null)
+            .Select(e => EffectiveEquipmentInvestigator.Investigate(e, resolver, cancel)).ToArray();
+        var roots = templates.Where(t => t.Chain.Status == "Resolved")
+            .GroupBy(t => (t.Chain.RecordType, Root: t.Chain.RootParent!))
+            .OrderBy(g => g.Key.RecordType, StringComparer.Ordinal).ThenBy(g => g.Key.Root, StringComparer.Ordinal)
+            .Select(g =>
+            {
+                cancel.ThrowIfCancellationRequested();
+                var children = g.Select(t => resolver.GetRecord(t.ChildFormKey)).ToArray();
+                return new TemplateRootSummary(g.Key.RecordType, g.Key.Root, resolver.GetRecord(g.Key.Root).WinningPlugin,
+                    children.Length, children.Count(c => c.Enchantment is not null),
+                    children.Select(c => c.DefiningPlugin).Distinct().Order(StringComparer.Ordinal).ToArray(),
+                    children.Select(c => c.WinningPlugin).Distinct().Order(StringComparer.Ordinal).ToArray(),
+                    children.Select(c => c.FormKey).Order(StringComparer.Ordinal).ToArray(), "UnvalidatedDesignFamily_NoBaselineCreated");
+            }).ToArray();
         return new(SchemaVersion, PatcherVersion, ClassificationVersion, "0.54.4", "0.36.6", "English",
-            new Settings { OutputDirectory = settings.OutputDirectory }, inputs.ToArray(), summary, equipment, groups, issues)
+            System.Text.Json.JsonSerializer.Deserialize<Settings>(System.Text.Json.JsonSerializer.Serialize(settings))!, inputs.ToArray(), summary, equipment, groups, issues)
         {
             KeywordSummary = AggregateKeywords(equipment),
-            EligibilitySummary = AggregateEligibility(equipment)
+            EligibilitySummary = AggregateEligibility(equipment),
+            TemplateAnalysis = templates,
+            TemplateRoots = roots,
+            BalanceAnalysis = BalanceAudit.Build(equipment, settings, cancel)
         };
     }
 

@@ -41,6 +41,9 @@ public static class ReportWriter
             (Name: "equipment-groups.csv", Text: GroupsCsv(report)),
             (Name: "classification-issues.csv", Text: IssuesCsv(report)),
             (Name: "keyword-summary.csv", Text: KeywordsCsv(report)),
+            (Name: "template-analysis.csv", Text: TemplatesCsv(report)),
+            (Name: "balance-findings.csv", Text: BalanceFindingsCsv(report)),
+            (Name: "balance-groups.csv", Text: BalanceGroupsCsv(report)),
             (Name: "audit.json", Text: Json(report))
         };
         var staged = new List<(string Temporary, string Destination)>();
@@ -132,6 +135,57 @@ public static class ReportWriter
         return text.ToString();
     }
 
+    public static string TemplatesCsv(AuditReport report)
+    {
+        var text = new StringBuilder();
+        Row(text, "recordType", "childFormKey", "childEditorId", "childName", "childWinningPlugin", "directParent", "rootParent",
+            "templateDepth", "chainStatus", "fieldName", "rawChildValueJson", "proposedEffectiveValueJson", "sourceFormKey",
+            "sourceWinningPlugin", "ruleId", "resolutionStatus", "fieldTemplateDepth", "valuesDiffer", "validationStatus", "resolutionDiagnosticsJson");
+        foreach (var t in report.TemplateAnalysis)
+            foreach (var f in t.Fields)
+                Row(text, t.Chain.RecordType, t.ChildFormKey, t.ChildEditorId, t.ChildName, t.ChildWinningPlugin,
+                    t.Chain.DirectParent, t.Chain.RootParent, t.Chain.Depth, t.Chain.Status, f.Name,
+                    f.RawChildValue.GetRawText(), f.ProposedEffectiveValue.GetRawText(), f.SourceFormKey,
+                    f.SourceWinningPlugin, f.RuleId, f.ResolutionStatus, f.TemplateDepth, f.ValuesDiffer,
+                    f.ValidationStatus, Compact(t.Diagnostics));
+        return text.ToString();
+    }
+
+    public static string BalanceFindingsCsv(AuditReport report)
+    {
+        var text = new StringBuilder();
+        Row(text, "recordType", "formKey", "editorId", "name", "definingPlugin", "winningPlugin", "category", "material",
+            "cohortId", "metric", "value", "referenceMedian", "referenceMinimum", "referenceMaximum", "independentPeerCount",
+            "signedDifference", "absoluteDifference", "percentageDifference", "robustDeviationScore", "findingType", "severity",
+            "confidence", "explanation", "falsePositiveReasonsJson", "peerFormKeysJson", "referenceMad");
+        foreach (var f in report.BalanceAnalysis?.Findings ?? [])
+            Row(text, f.RecordType, f.FormKey, f.EditorId, f.Name, f.DefiningPlugin, f.WinningPlugin, f.Category, f.Material,
+                f.CohortId, f.Metric, f.Value, f.Reference.Median, f.Reference.Minimum, f.Reference.Maximum, f.Reference.Count,
+                f.SignedDifference, f.AbsoluteDifference, f.PercentageDifference, f.RobustDeviationScore, f.FindingType,
+                f.Severity, f.Confidence, f.Explanation, Compact(f.FalsePositiveReasons), Compact(f.PeerFormKeys), f.Reference.Mad);
+        return text.ToString();
+    }
+
+    public static string BalanceGroupsCsv(AuditReport report)
+    {
+        var text = new StringBuilder();
+        Row(text, "cohortId", "recordType", "category", "armorType", "material", "animationType", "skill", "equipmentType",
+            "slotMask", "shieldFlag", "flags", "metric", "candidateCount", "independentReferenceCount", "invalidReferenceMetrics",
+            "minimum", "maximum", "mean", "median", "mad", "q1", "q3", "status", "maximumDefiningShare", "maximumWinningShare",
+            "definingPluginsJson", "winningPluginsJson", "possibleDuplicateRecords", "warningsJson", "memberFormKeysJson",
+            "referenceFormKeysJson", "referenceDesignIdsJson");
+        foreach (var g in report.BalanceAnalysis?.Groups ?? [])
+        {
+            var c = g.Cohort; var d = g.Distribution; var p = g.Concentration;
+            Row(text, g.CohortId, c.RecordType, c.Category, c.ArmorType, c.Material, c.AnimationType, c.Skill, c.EquipmentType,
+                c.SlotMask, c.ShieldFlag, c.Flags, g.Metric, g.CandidateCount, d.Count, g.InvalidReferenceMetrics,
+                d.Minimum, d.Maximum, d.Mean, d.Median, d.Mad, d.Q1, d.Q3, g.Status, p.MaximumDefiningShare, p.MaximumWinningShare,
+                Compact(p.DefiningPlugins), Compact(p.WinningPlugins), g.PossibleDuplicateRecords, Compact(g.Warnings),
+                Compact(g.MemberFormKeys), Compact(g.ReferenceFormKeys), Compact(g.ReferenceDesignIds));
+        }
+        return text.ToString();
+    }
+
     private static string Compact<T>(T value) => JsonSerializer.Serialize(value, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
 
     public static string CsvCell(object? value)
@@ -148,11 +202,13 @@ public static class ReportWriter
     {
         var s = report.Summary;
         var text = new StringBuilder();
-        text.AppendLine("Equipment Balance Patcher v0.1b — read-only equipment inventory");
+        text.AppendLine("Equipment Balance Patcher v0.1e — read-only inventory, template prototype and independent balance audit");
         text.AppendLine($"Inspected WEAP: {s.Weapons}; ARMO: {s.Armor}; deleted: {s.Deleted}");
         text.AppendLine($"Classification — confident: {s.Confident}; partial: {s.Partial}; unclassified: {s.Unclassified}");
         text.AppendLine($"Templated: {s.Templated}; enchanted: {s.Enchanted}; scripted: {s.Scripted}; unresolved reference occurrences: {s.UnresolvedReferences}");
         text.AppendLine($"Statistics eligible: {s.StatisticsEligible}; baseline eligible: {s.BaselineEligible}; baseline excluded: {s.BaselineExcluded}");
+        text.AppendLine($"Template investigation — resolved chains: {report.TemplateAnalysis.Count(t => t.Chain.Status == "Resolved")}; failed chains: {report.TemplateAnalysis.Count(t => t.Chain.Status != "Resolved")}; shared-root families: {report.TemplateRoots.Count(r => r.TemplatedVariants > 1)}");
+        text.AppendLine("Proposed inherited values and hypothetical eligibility are unvalidated; production classification/eligibility still use stored values.");
         text.AppendLine("Category breakdown (all inventoried records):");
         foreach (var (category, count) in s.Categories) text.AppendLine($"  {category}: {count}");
         text.AppendLine("Material breakdown (all inventoried records):");
@@ -162,7 +218,13 @@ public static class ReportWriter
             text.AppendLine($"  {reason.Stage}/{reason.RecordType}/{reason.ReasonCategory}/{reason.Reason}: {reason.AffectedRecords}");
         text.AppendLine("Reports:");
         foreach (var path in paths) text.AppendLine("  " + path);
-        text.AppendLine("No game records modified. No balance evaluation performed.");
+        if (report.BalanceAnalysis is { } balance)
+        {
+            var b = balance.Summary;
+            text.AppendLine($"Balance — enabled: {balance.Enabled}; eligible: {b.EligibilityCandidates}; enabled candidates: {b.EnabledCandidates}; analyzed with sufficient unconcentrated peers: {b.AnalyzedRecords}; excluded: {b.ExcludedRecords}; insufficient evidence: {b.InsufficientEvidenceRecords}; insufficient peers/no reference: {b.InsufficientPeerRecords}; invalid metrics: {b.InvalidMetricRecords}");
+            text.AppendLine($"Provisional findings: {b.StatisticalFindings}; potential consistency issues: {b.PotentialConsistencyIssues}; insufficient-evidence findings: {b.InsufficientEvidenceFindings}. Statistical differences require manual review.");
+        }
+        text.AppendLine("No game records modified. Stored independent values only; no stat recommendations or automatic balancing.");
         return text.ToString();
     }
 }

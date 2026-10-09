@@ -102,6 +102,28 @@ public sealed class ReaderIntegrationTests
     }
 
     [TestMethod]
+    public void TemplatePrototypeUsesOverriddenWinningParentWithoutChangingChild()
+    {
+        var original = new SkyrimMod(ModKey.FromNameAndExtension("Test.esm"), SkyrimRelease.SkyrimSE);
+        var parent = original.Weapons.AddNew(); parent.BasicStats = new() { Damage = 7 };
+        var child = original.Weapons.AddNew(); child.BasicStats = new() { Damage = 8 };
+        child.Template.SetTo(parent.FormKey);
+        var patch = new SkyrimMod(ModKey.FromNameAndExtension("Patch.esp"), SkyrimRelease.SkyrimSE);
+        var winningParent = patch.Weapons.GetOrAddAsOverride(parent); winningParent.BasicStats!.Damage = 11;
+        ISkyrimModGetter[] listed = [original, patch];
+        using var cache = listed.ToImmutableLinkCache();
+        var snapshots = new EquipmentReader(cache).Read(listed.Reverse().Weapon()
+            .WinningContextOverrides(includeDeletedRecords: true).Select(c => (c.Record, c.ModKey)), []);
+        var report = InventoryAudit.Build(snapshots, [], new());
+        var proposed = report.TemplateAnalysis.Single().Fields.Single(f => f.Name == "Damage");
+        Assert.AreEqual(8, proposed.RawChildValue.GetDouble()); Assert.AreEqual(11, proposed.ProposedEffectiveValue.GetDouble());
+        Assert.AreEqual("Patch.esp", proposed.SourceWinningPlugin);
+        Assert.AreEqual((ushort)7, parent.BasicStats.Damage); Assert.AreEqual((ushort)8, child.BasicStats.Damage);
+        Assert.AreEqual((ushort)11, winningParent.BasicStats.Damage);
+        Assert.IsFalse(report.Equipment.Single(e => e.Snapshot.FormKey == child.FormKey.ToString()).Eligibility.AnalysisEligible);
+    }
+
+    [TestMethod]
     [DataRow(false, false)]
     [DataRow(true, false)]
     [DataRow(false, true)]
@@ -115,6 +137,10 @@ public sealed class ReaderIntegrationTests
         weapon.EditorID = "SyntheticSword";
         weapon.BasicStats = new WeaponBasicStats { Damage = 8, Weight = 9, Value = 100 };
         weapon.Data = new WeaponData { AnimationType = WeaponAnimationType.OneHandSword, Speed = 1, Reach = 1 };
+        var templateChild = original.Weapons.AddNew();
+        templateChild.EditorID = "SyntheticTemplateChild";
+        templateChild.BasicStats = new WeaponBasicStats { Damage = 9, Weight = 10, Value = 101 };
+        templateChild.Template.SetTo(weapon.FormKey);
         original.WriteToBinary(Path.Combine(data, "Skyrim.esm")); // Test fixture setup only.
         var pluginList = Path.Combine(directory.Path, "plugins.txt"); File.WriteAllText(pluginList, "*Skyrim.esm\n");
         var output = Path.Combine(directory.Path, "AuditOutput.esp");
@@ -175,11 +201,17 @@ public sealed class ReaderIntegrationTests
             Assert.AreEqual(outputTime, File.GetLastWriteTimeUtc(output));
         }
         CollectionAssert.AreEqual(inputBytes, File.ReadAllBytes(Path.Combine(data, "Skyrim.esm")));
-        Assert.AreEqual(5, Directory.GetFiles(reports).Length);
+        Assert.AreEqual(8, Directory.GetFiles(reports).Length);
         using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(reports, "audit.json")));
         var observed = json.RootElement.GetProperty("equipment")[0].GetProperty("snapshot");
         Assert.AreEqual(existingOutput ? 14 : 8, observed.GetProperty("damage").GetInt32());
         Assert.AreEqual(existingOutput ? "AuditOutput.esp" : "Skyrim.esm", observed.GetProperty("winningPlugin").GetString());
+        var templateEntry = json.RootElement.GetProperty("templateAnalysis")[0];
+        Assert.AreEqual("Resolved", templateEntry.GetProperty("chain").GetProperty("status").GetString());
+        var proposedDamage = templateEntry.GetProperty("fields").EnumerateArray().Single(f => f.GetProperty("name").GetString() == "Damage");
+        Assert.AreEqual(9, proposedDamage.GetProperty("rawChildValue").GetInt32());
+        Assert.AreEqual(existingOutput ? 14 : 8, proposedDamage.GetProperty("proposedEffectiveValue").GetInt32());
+        Assert.AreEqual("Unvalidated", proposedDamage.GetProperty("validationStatus").GetString());
         Assert.AreEqual(existingOutput ? 1 : 0, Directory.GetFiles(directory.Path, "*.esp").Length);
     }
 }

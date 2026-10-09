@@ -352,3 +352,7 @@ MigrationBackup/
 .idea/
 *.sln.iml
 
+# Local load-order reference data and generated audit replays.
+/Reports/
+/Reports-v*/
+

@@ -1,5 +1,7 @@
 # Read-only completion investigation (v0.1b)
 
+v0.1c retains the same no-export lifecycle and external GUI limitation. Its integration fixtures additionally contain a template child and now verify six reports; the historical v0.1b tests below verified five.
+
 ## What was established
 
 Synthesis's patcher library is pinned to 0.36.6. The copied reports identify that library version, **not the installed GUI version**. There was no GUI log/process trace accompanying the reports, so the original incident cannot be reproduced exactly from those files.

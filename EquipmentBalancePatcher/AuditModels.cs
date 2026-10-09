@@ -4,6 +4,13 @@ public sealed class Settings
 {
     // Relative paths resolve against Synthesis's patcher-specific settings data folder.
     public string OutputDirectory { get; set; } = "Reports";
+    public int MaximumTemplateDepth { get; set; } = TemplateResolver.DefaultMaximumDepth;
+    public bool EnableBalanceAudit { get; set; } = true;
+    public int MinimumIndependentPeers { get; set; } = 5;
+    public double RobustDeviationThreshold { get; set; } = 3.5;
+    public bool IncludeEnchantedAnalysisCandidates { get; set; } = true;
+    public bool EnableMaterialProgressionReport { get; set; } = true;
+    public BalanceThresholds BalanceThresholds { get; set; } = new();
 }
 
 public sealed record InputPlugin(string Plugin, bool Enabled);
@@ -89,4 +96,8 @@ public sealed record AuditReport(string SchemaVersion, string PatcherVersion, st
 {
     public KeywordSummary[] KeywordSummary { get; init; } = [];
     public EligibilityReasonSummary[] EligibilitySummary { get; init; } = [];
+    public string TemplatePolicyVersion { get; init; } = EffectiveEquipmentInvestigator.PolicyVersion;
+    public EffectiveEquipment[] TemplateAnalysis { get; init; } = [];
+    public TemplateRootSummary[] TemplateRoots { get; init; } = [];
+    public BalanceAnalysis? BalanceAnalysis { get; init; }
 }

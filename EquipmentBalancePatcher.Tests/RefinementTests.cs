@@ -89,7 +89,7 @@ public sealed class RefinementTests
         Assert.AreEqual(ReportWriter.Json(report), ReportWriter.Json(InventoryAudit.Build([second, first], [], new())));
         Assert.AreEqual(ReportWriter.KeywordsCsv(report), ReportWriter.KeywordsCsv(InventoryAudit.Build([second, first], [], new())));
         using var json = JsonDocument.Parse(ReportWriter.Json(report));
-        Assert.AreEqual("2", json.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.AreEqual("4", json.RootElement.GetProperty("schemaVersion").GetString());
         Assert.IsTrue(json.RootElement.TryGetProperty("eligibilitySummary", out _));
     }
 

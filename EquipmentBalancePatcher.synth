@@ -1,0 +1,6 @@
+{
+  "AddGitPatcher": {
+    "Url": "https://github.com/hoskonen/synthesis-equipment-balance-patcher",
+    "SelectedProject": "EquipmentBalancePatcher/EquipmentBalancePatcher.csproj"
+  }
+}

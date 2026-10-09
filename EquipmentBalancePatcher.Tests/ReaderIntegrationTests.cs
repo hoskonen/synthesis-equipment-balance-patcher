@@ -1,0 +1,136 @@
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Mutagen.Bethesda;
+using Mutagen.Bethesda.Plugins;
+using Mutagen.Bethesda.Skyrim;
+using Mutagen.Bethesda.Synthesis;
+using Mutagen.Bethesda.Synthesis.CLI;
+
+namespace EquipmentBalancePatcher.Tests;
+
+[TestClass]
+[DoNotParallelize]
+public sealed class ReaderIntegrationTests
+{
+    [TestMethod]
+    public void ReaderInventoriesWinningOverridesOnceWithoutMutatingInputs()
+    {
+        var original = new SkyrimMod(ModKey.FromNameAndExtension("Skyrim.esm"), SkyrimRelease.SkyrimSE);
+        var material = new Keyword(FormKey.Factory("01E719:Skyrim.esm"), SkyrimRelease.SkyrimSE) { EditorID = "WeapMaterialSteel" };
+        original.Keywords.Add(material);
+        var weapon = original.Weapons.AddNew();
+        weapon.EditorID = "TestSword"; weapon.Name = "Test sword";
+        weapon.BasicStats = new WeaponBasicStats { Damage = 8, Weight = 9, Value = 100 };
+        weapon.Data = new WeaponData { AnimationType = WeaponAnimationType.OneHandSword, Speed = 1, Reach = 1 };
+        weapon.Keywords = [material.ToLink<IKeywordGetter>()];
+        var baseArmor = original.Armors.AddNew();
+        baseArmor.EditorID = "MissingBody"; baseArmor.BodyTemplate = null;
+        var patch = new SkyrimMod(ModKey.FromNameAndExtension("Patch.esp"), SkyrimRelease.SkyrimSE);
+        var winner = patch.Weapons.GetOrAddAsOverride(weapon);
+        winner.BasicStats!.Damage = 12;
+        var deleted = patch.Armors.GetOrAddAsOverride(baseArmor); deleted.IsDeleted = true;
+        ISkyrimModGetter[] listed = [original, patch];
+        using var cache = listed.ToImmutableLinkCache();
+        var before = winner.BasicStats.Damage;
+        var weaponPasses = 0; var armorPasses = 0;
+        IEnumerable<(IWeaponGetter, ModKey)> Weapons()
+        {
+            weaponPasses++;
+            foreach (var context in listed.Reverse().Weapon().WinningContextOverrides(includeDeletedRecords: true))
+                yield return (context.Record, context.ModKey);
+        }
+        IEnumerable<(IArmorGetter, ModKey)> Armors()
+        {
+            armorPasses++;
+            foreach (var context in listed.Reverse().Armor().WinningContextOverrides(includeDeletedRecords: true))
+                yield return (context.Record, context.ModKey);
+        }
+        var snapshots = new EquipmentReader(cache).Read(Weapons(), Armors());
+        var report = InventoryAudit.Build(snapshots, [], new());
+        Assert.AreEqual(1, weaponPasses); Assert.AreEqual(1, armorPasses);
+        Assert.AreEqual(2, snapshots.Length);
+        var observed = snapshots.Single(s => s.RecordType == "WEAP");
+        Assert.AreEqual("Skyrim.esm", observed.DefiningPlugin);
+        Assert.AreEqual("Patch.esp", observed.WinningPlugin);
+        Assert.AreEqual(12d, observed.Damage);
+        Assert.AreEqual("Resolved", observed.Keywords.Single().Status);
+        Assert.AreEqual(1, report.Summary.Deleted);
+        Assert.AreEqual(before, winner.BasicStats.Damage);
+        Assert.AreEqual((ushort)8, weapon.BasicStats.Damage);
+        Assert.AreEqual(1, patch.Weapons.Count); Assert.AreEqual(1, patch.Armors.Count);
+    }
+
+    [TestMethod]
+    public void ReaderPreservesMissingAndNonfiniteFields()
+    {
+        var mod = new SkyrimMod(ModKey.FromNameAndExtension("Test.esp"), SkyrimRelease.SkyrimSE);
+        var weapon = mod.Weapons.AddNew(); weapon.BasicStats = null;
+        weapon.Data = new WeaponData { Speed = float.NaN, Reach = float.PositiveInfinity };
+        weapon.Keywords = [new FormLink<IKeywordGetter>(FormKey.Factory("000999:Missing.esm"))];
+        weapon.Template.SetTo(weapon.FormKey); // Self template must be recorded, never followed.
+        using var cache = mod.ToImmutableLinkCache();
+        var snapshot = new EquipmentReader(cache).ReadWeapon(weapon, mod.ModKey);
+        Assert.IsNull(snapshot.Damage); Assert.IsNull(snapshot.Speed); Assert.IsNull(snapshot.Reach);
+        Assert.AreEqual("Unresolved", snapshot.Keywords.Single().Status);
+        Assert.AreEqual(weapon.FormKey.ToString(), snapshot.Template!.FormKey);
+        Assert.AreEqual(2, snapshot.ExtractionDiagnostics.Count(d => d.Code == "NonFiniteMetric"));
+        JsonSerializationDoesNotThrow(snapshot);
+    }
+
+    private static void JsonSerializationDoesNotThrow(EquipmentSnapshot snapshot) =>
+        ReportWriter.Json(InventoryAudit.Build([snapshot], [], new()));
+
+    [TestMethod]
+    [DataRow(false)]
+    [DataRow(true)]
+    public async Task SynthesisNoPatchNeitherCreatesNorOverwritesPlugin(bool existingOutput)
+    {
+        using var directory = new TemporaryDirectory();
+        var data = Path.Combine(directory.Path, "Data"); Directory.CreateDirectory(data);
+        var original = new SkyrimMod(ModKey.FromNameAndExtension("Skyrim.esm"), SkyrimRelease.SkyrimSE);
+        var weapon = original.Weapons.AddNew();
+        weapon.EditorID = "SyntheticSword";
+        weapon.BasicStats = new WeaponBasicStats { Damage = 8, Weight = 9, Value = 100 };
+        weapon.Data = new WeaponData { AnimationType = WeaponAnimationType.OneHandSword, Speed = 1, Reach = 1 };
+        original.WriteToBinary(Path.Combine(data, "Skyrim.esm")); // Test fixture setup only.
+        var pluginList = Path.Combine(directory.Path, "plugins.txt"); File.WriteAllText(pluginList, "*Skyrim.esm\n");
+        var output = Path.Combine(directory.Path, "AuditOutput.esp");
+        if (existingOutput)
+        {
+            var preceding = new SkyrimMod(ModKey.FromNameAndExtension("AuditOutput.esp"), SkyrimRelease.SkyrimSE);
+            preceding.Weapons.GetOrAddAsOverride(weapon).BasicStats!.Damage = 14;
+            preceding.WriteToBinary(output); // A preceding patcher's result, not an audit write.
+        }
+        var beforeOutput = existingOutput ? File.ReadAllBytes(output) : null;
+        var inputBytes = File.ReadAllBytes(Path.Combine(data, "Skyrim.esm"));
+        var outputTime = existingOutput ? File.GetLastWriteTimeUtc(output) : default;
+        var ran = false;
+        var reports = Path.Combine(directory.Path, "Reports");
+        await SynthesisPipeline.Instance
+            .AddPatch<ISkyrimMod, ISkyrimModGetter>(state =>
+            {
+                ran = true;
+                Program.RunAudit(state, new Settings { OutputDirectory = reports });
+            }, Program.AuditPreferences())
+            .Run(new RunSynthesisMutagenPatcher
+            {
+                GameRelease = GameRelease.SkyrimSE, DataFolderPath = data, LoadOrderFilePath = pluginList,
+                OutputPath = output, SourcePath = existingOutput ? output : null,
+                ExtraDataFolder = directory.Path, ModKey = "AuditOutput.esp", LoadOrderIncludesCreationClub = true
+            });
+        Assert.IsTrue(ran);
+        Assert.IsTrue(Program.AuditPreferences().NoPatch);
+        if (beforeOutput is null) Assert.IsFalse(File.Exists(output));
+        else
+        {
+            CollectionAssert.AreEqual(beforeOutput, File.ReadAllBytes(output));
+            Assert.AreEqual(outputTime, File.GetLastWriteTimeUtc(output));
+        }
+        CollectionAssert.AreEqual(inputBytes, File.ReadAllBytes(Path.Combine(data, "Skyrim.esm")));
+        Assert.AreEqual(4, Directory.GetFiles(reports).Length);
+        using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(reports, "audit.json")));
+        var observed = json.RootElement.GetProperty("equipment")[0].GetProperty("snapshot");
+        Assert.AreEqual(existingOutput ? 14 : 8, observed.GetProperty("damage").GetInt32());
+        Assert.AreEqual(existingOutput ? "AuditOutput.esp" : "Skyrim.esm", observed.GetProperty("winningPlugin").GetString());
+        Assert.AreEqual(existingOutput ? 1 : 0, Directory.GetFiles(directory.Path, "*.esp").Length);
+    }
+}

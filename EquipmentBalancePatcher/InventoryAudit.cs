@@ -2,9 +2,9 @@ namespace EquipmentBalancePatcher;
 
 public static class InventoryAudit
 {
-    public const string PatcherVersion = "0.1a";
-    public const string SchemaVersion = "1";
-    public const string ClassificationVersion = "1";
+    public const string PatcherVersion = "0.1b";
+    public const string SchemaVersion = "2";
+    public const string ClassificationVersion = "2";
 
     public static AuditReport Build(IEnumerable<EquipmentSnapshot> snapshots, IEnumerable<InputPlugin> inputs,
         Settings settings, CancellationToken cancel = default)
@@ -46,10 +46,47 @@ public static class InventoryAudit
             equipment.Sum(e => e.Snapshot.Keywords.Count(k => k.Status != "Resolved")
                 + EquipmentClassifier.References(e.Snapshot).Count(r => r.Link.Status != "Resolved")), categories, materials);
         var issues = equipment.SelectMany(e => e.Diagnostics.Select(d =>
-            new ClassificationIssue(e.Snapshot.FormKey, e.Snapshot.RecordType, d.Code, d.Message))).ToArray();
+            new ClassificationIssue(e.Snapshot.FormKey, e.Snapshot.RecordType, d.Code, d.Message)
+            { Severity = d.Severity, Relevance = d.Relevance })).ToArray();
         return new(SchemaVersion, PatcherVersion, ClassificationVersion, "0.54.4", "0.36.6", "English",
-            new Settings { OutputDirectory = settings.OutputDirectory }, inputs.ToArray(), summary, equipment, groups, issues);
+            new Settings { OutputDirectory = settings.OutputDirectory }, inputs.ToArray(), summary, equipment, groups, issues)
+        {
+            KeywordSummary = AggregateKeywords(equipment),
+            EligibilitySummary = AggregateEligibility(equipment)
+        };
     }
+
+    private static KeywordSummary[] AggregateKeywords(AuditedEquipment[] equipment) => equipment
+        .SelectMany(e => e.Snapshot.Keywords.DistinctBy(k => k.FormKey, StringComparer.OrdinalIgnoreCase)
+            .Select(k => (Equipment: e.Snapshot, Keyword: k)))
+        .GroupBy(x => x.Keyword.FormKey, StringComparer.OrdinalIgnoreCase)
+        .OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase).Select(g =>
+        {
+            var rows = g.ToArray();
+            string[] Sorted(IEnumerable<string> values) => values.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+            var categories = Sorted(rows.Select(r => DiagnosticPolicy.KeywordCategory(r.Keyword)));
+            var category = categories.Contains("Unresolved") ? "Unresolved"
+                : categories.Contains("PotentialClassification") ? "PotentialClassification" : categories[0];
+            return new KeywordSummary(Sorted(rows.Select(r => r.Keyword.FormKey))[0],
+                Sorted(rows.Select(r => r.Keyword.EditorId).OfType<string>()), Sorted(rows.Select(r => r.Keyword.Status)),
+                category, category is "PotentialClassification" or "RecognizedClassification" or "Unresolved",
+                rows.Length, Sorted(rows.Select(r => r.Equipment.RecordType)), Sorted(rows.Select(r => r.Equipment.DefiningPlugin)),
+                Sorted(rows.Select(r => r.Equipment.WinningPlugin)), rows.Select(r => r.Equipment)
+                    .OrderBy(s => s.RecordType, StringComparer.Ordinal).ThenBy(s => s.FormKey, StringComparer.Ordinal)
+                    .Take(5).Select(s => new KeywordExample(s.FormKey, s.EditorId, s.RecordType)).ToArray());
+        }).ToArray();
+
+    private static EligibilityReasonSummary[] AggregateEligibility(AuditedEquipment[] equipment) => equipment
+        .SelectMany(e => new[] {
+            (Stage: "Statistics", Reasons: e.Eligibility.InventoryStatisticsReasons),
+            (Stage: "Baseline", Reasons: e.Eligibility.BaselineReasons),
+            (Stage: "Analysis", Reasons: e.Eligibility.AnalysisReasons)
+        }.SelectMany(stage => stage.Reasons.Distinct().Select(reason => (stage.Stage, e.Snapshot.RecordType, Reason: reason))))
+        .GroupBy(x => (x.Stage, x.RecordType, x.Reason))
+        .OrderBy(g => g.Key.Stage, StringComparer.Ordinal).ThenBy(g => g.Key.RecordType, StringComparer.Ordinal)
+        .ThenBy(g => g.Key.Reason, StringComparer.Ordinal)
+        .Select(g => new EligibilityReasonSummary(g.Key.Stage, g.Key.RecordType, g.Key.Reason,
+            DiagnosticPolicy.ReasonCategory(g.Key.Reason), g.Count())).ToArray();
 
     public static MetricStatistics Describe(IEnumerable<double?> source)
     {

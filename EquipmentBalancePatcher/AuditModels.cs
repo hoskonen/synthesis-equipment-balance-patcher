@@ -8,7 +8,11 @@ public sealed class Settings
 
 public sealed record InputPlugin(string Plugin, bool Enabled);
 public sealed record ReferenceSnapshot(string FormKey, string? EditorId, string Status);
-public sealed record Diagnostic(string Code, string Message);
+public sealed record Diagnostic(string Code, string Message)
+{
+    public string Severity { get; init; } = "Warning";
+    public string Relevance { get; init; } = "Classification";
+}
 
 public sealed record EquipmentSnapshot
 {
@@ -18,6 +22,7 @@ public sealed record EquipmentSnapshot
     public required string DefiningPlugin { get; init; }
     public required string WinningPlugin { get; init; }
     public required string RecordType { get; init; }
+    public string StatSemantics { get; init; } = "StoredRecord";
     public bool Deleted { get; init; }
     public bool? Playable { get; init; }
     public ReferenceSnapshot[] Keywords { get; init; } = [];
@@ -45,7 +50,13 @@ public sealed record EquipmentSnapshot
 }
 
 public sealed record Classification(string? Category, string? Material, string? Handedness,
-    string Status, string[] Evidence, string[] ReasonCodes);
+    string Status, string[] Evidence, string[] ReasonCodes)
+{
+    public string? MaterialFamily { get; init; }
+    public string? MaterialVariant { get; init; }
+    public string Scope { get; init; } = "OrdinaryEquipment";
+    public string[] ScopeReasons { get; init; } = [];
+}
 public sealed record Eligibility(bool InventoryStatisticsEligible, bool BaselineEligible,
     bool AnalysisEligible, string[] InventoryStatisticsReasons, string[] BaselineReasons,
     string[] AnalysisReasons);
@@ -60,8 +71,22 @@ public sealed record InventorySummary(int Weapons, int Armor, int Deleted, int C
     int Partial, int Unclassified, int Templated, int Enchanted, int Scripted,
     int BaselineEligible, int BaselineExcluded, int StatisticsEligible, int UnresolvedReferences,
     SortedDictionary<string, int> Categories, SortedDictionary<string, int> Materials);
-public sealed record ClassificationIssue(string FormKey, string RecordType, string Code, string Message);
+public sealed record ClassificationIssue(string FormKey, string RecordType, string Code, string Message)
+{
+    public string Severity { get; init; } = "Warning";
+    public string Relevance { get; init; } = "Classification";
+}
+public sealed record KeywordExample(string FormKey, string? EditorId, string RecordType);
+public sealed record KeywordSummary(string FormKey, string[] EditorIds, string[] ResolutionStatuses,
+    string DiagnosticCategory, bool PotentiallyRelevant, int AffectedRecords, string[] RecordTypes,
+    string[] OriginPlugins, string[] WinningPlugins, KeywordExample[] Examples);
+public sealed record EligibilityReasonSummary(string Stage, string RecordType, string Reason,
+    string ReasonCategory, int AffectedRecords);
 public sealed record AuditReport(string SchemaVersion, string PatcherVersion, string ClassificationVersion,
     string MutagenVersion, string SynthesisVersion, string NameLanguage, Settings Settings,
     InputPlugin[] InputLoadOrder, InventorySummary Summary, AuditedEquipment[] Equipment,
-    GroupStatistics[] Groups, ClassificationIssue[] ClassificationDiagnostics);
+    GroupStatistics[] Groups, ClassificationIssue[] ClassificationDiagnostics)
+{
+    public KeywordSummary[] KeywordSummary { get; init; } = [];
+    public EligibilityReasonSummary[] EligibilitySummary { get; init; } = [];
+}

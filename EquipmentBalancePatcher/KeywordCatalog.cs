@@ -8,6 +8,21 @@ public static class KeywordCatalog
     // FormKeys establish identity; EditorIDs are explanatory labels only.
     public static IReadOnlyDictionary<string, KnownKeyword> Entries { get; } = Build();
 
+    // Only these reviewed base/variant pairs can coexist. Same-family siblings still conflict.
+    public static IReadOnlyDictionary<string, string> VariantParents { get; } = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["OrcishScaled"] = "Orcish", ["ElvenGilded"] = "Elven", ["IronBanded"] = "Iron",
+        ["ImperialStudded"] = "ImperialLight"
+    };
+
+    public static string Family(string material) => material switch
+    {
+        "SteelPlate" => "Steel", "StalhrimHeavy" or "StalhrimLight" => "Stalhrim",
+        "BonemoldHeavy" or "BonemoldLight" => "Bonemold", "ChitinHeavy" or "ChitinLight" => "Chitin",
+        "NordicHeavy" or "NordicLight" => "Nordic", "ImperialHeavy" or "ImperialLight" or "ImperialStudded" => "Imperial",
+        _ => VariantParents.TryGetValue(material, out var parent) ? parent : material
+    };
+
     private static Dictionary<string, KnownKeyword> Build()
     {
         var result = new Dictionary<string, KnownKeyword>(StringComparer.OrdinalIgnoreCase);
@@ -29,6 +44,28 @@ public static class KeywordCatalog
         Skyrim("06BBE8", "ArmorClothing", "ArmorType", "Clothing");
         Skyrim("0A8668", "DaedricArtifact", "SpecialEquipment", "Artifact");
         Skyrim("0917E8", "VendorItemDaedricArtifact", "SpecialEquipment", "Artifact");
+        Skyrim("06BBE9", "ArmorJewelry", "Scope", "Jewelry");
+        // Reviewed exact identities from resolved keywords in the supplied v0.1a audit.
+        foreach (var (id, editorId) in new[] {
+            ("08F958", "VendorItemWeapon"), ("08F959", "VendorItemArmor"),
+            ("08F95A", "VendorItemJewelry"), ("08F95B", "VendorItemClothing"),
+            ("0937A4", "VendorItemStaff"), ("0C27BD", "MagicDisallowEnchanting"),
+            ("0A8657", "ClothingBody"), ("10CD09", "ClothingRing"), ("10CD0A", "ClothingNecklace"),
+            ("0A8664", "JewelryExpensive"), ("02C177", "PerkFistsOrcish") })
+            Skyrim(id, editorId, "Unrelated", "Gameplay");
+        Add("Update.esm", "002ED8", "Survival_ArmorCold", "Unrelated", "Survival");
+        Add("Update.esm", "002ED9", "Survival_ArmorWarm", "Unrelated", "Survival");
+        Add("Update.esm", "002EDB", "Survival_BodyAndHead", "Unrelated", "Survival");
+        Add("Update.esm", "003278", "MatchingSetHeavyExclude", "Unrelated", "Perk");
+        Add("Update.esm", "003277", "ccBGS_ArmorMaterialOrcishLight", "ArmorMaterial", "OrcishScaled");
+        foreach (var (id, label, material) in new[] {
+            ("21BD63", "Golden", "GoldenSaint"), ("21BD64", "Dark", "DarkSeducer"),
+            ("21BD65", "Madness", "Madness"), ("21BD66", "Amber", "Amber") })
+            Add("ccBGSSSE025-AdvDSGS.esm", id, "ccBGSSSE025_ArmorMaterial" + label, "ArmorMaterial", material);
+        foreach (var (id, label, material) in new[] {
+            ("21BD67", "Amber", "Amber"), ("21BD68", "Madness", "Madness"),
+            ("21BD69", "Golden", "GoldenSaint"), ("21BD6A", "Dark", "DarkSeducer") })
+            Add("ccBGSSSE025-AdvDSGS.esm", id, "ccBGSSSE025_WeapMaterial" + label, "WeaponMaterial", material);
         foreach (var (id, material) in new[] {
             ("01E717", "Wood"), ("01E718", "Iron"), ("01E719", "Steel"),
             ("01E71A", "Dwarven"), ("01E71B", "Elven"), ("01E71C", "Orcish"),

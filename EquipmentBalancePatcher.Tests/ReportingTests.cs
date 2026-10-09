@@ -60,6 +60,7 @@ public sealed class ReportingTests
             Assert.AreEqual(ReportWriter.InventoryCsv(one), ReportWriter.InventoryCsv(two));
             Assert.AreEqual(ReportWriter.GroupsCsv(one), ReportWriter.GroupsCsv(two));
             Assert.AreEqual(ReportWriter.IssuesCsv(one), ReportWriter.IssuesCsv(two));
+            Assert.AreEqual(ReportWriter.KeywordsCsv(one), ReportWriter.KeywordsCsv(two));
         }
         finally { CultureInfo.CurrentCulture = before; }
     }
@@ -104,14 +105,14 @@ public sealed class ReportingTests
     }
 
     [TestMethod]
-    public void ReportWriterTouchesOnlyItsFourReports()
+    public void ReportWriterTouchesOnlyItsFiveReports()
     {
         using var directory = new TemporaryDirectory();
         var plugin = Path.Combine(directory.Path, "EBP.esp");
         byte[] sentinel = [1, 2, 3, 4];
         File.WriteAllBytes(plugin, sentinel);
         var paths = ReportWriter.Write(Build(ClassificationTests.Weapon()), directory.Path);
-        Assert.AreEqual(4, paths.Length);
+        Assert.AreEqual(5, paths.Length);
         CollectionAssert.AreEqual(sentinel, File.ReadAllBytes(plugin));
         Assert.IsFalse(Directory.GetFiles(directory.Path).Any(p => p.EndsWith(".tmp", StringComparison.Ordinal)));
         Assert.AreEqual(ReportWriter.Json(Build(ClassificationTests.Weapon())), File.ReadAllText(Path.Combine(directory.Path, "audit.json")));

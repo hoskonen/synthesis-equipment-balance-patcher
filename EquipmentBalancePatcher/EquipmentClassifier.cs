@@ -11,7 +11,7 @@ public static class EquipmentClassifier
     // Biped bits are slot number minus 30, not the xEdit slot number itself.
     private static readonly (string Category, uint Primary, uint Allowed)[] ArmorProfiles =
     [
-        ("Helmet", 1u << 0, (1u << 0) | (1u << 1) | (1u << 11) | (1u << 12)),
+        ("Helmet", 1u << 0, (1u << 0) | (1u << 1) | (1u << 11) | (1u << 12) | (1u << 13)),
         ("Cuirass", 1u << 2, 1u << 2),
         ("Gauntlets", 1u << 3, (1u << 3) | (1u << 4)),
         ("Boots", 1u << 7, (1u << 7) | (1u << 8)),
@@ -35,12 +35,20 @@ public static class EquipmentClassifier
             }
             if (KeywordCatalog.Entries.TryGetValue(keyword.FormKey, out var entry))
             {
-                known.Add(entry);
-                evidence.Add($"{keyword.FormKey} ({entry.EditorId}) => {entry.Kind}:{entry.Value}");
+                if (entry.Kind != "Unrelated")
+                {
+                    known.Add(entry);
+                    evidence.Add($"{keyword.FormKey} ({entry.EditorId}) => {entry.Kind}:{entry.Value}");
+                }
             }
             else
             {
-                diagnostics.Add(new("UnmappedKeyword", $"Keyword {keyword.FormKey} ({keyword.EditorId ?? "no EditorID"}) is outside the reviewed catalog; it may be unrelated to classification."));
+                if (DiagnosticPolicy.PotentialKeyword(keyword.EditorId))
+                {
+                    diagnostics.Add(new("PotentialClassificationKeyword", $"Unreviewed keyword {keyword.FormKey} ({keyword.EditorId}); naming suggests classification relevance, not an authoritative mapping."));
+                    if (keyword.EditorId is { } id && new[] { "ArmorMaterial", "WeapMaterial", "WeaponMaterial" }
+                        .Any(token => id.Contains(token, StringComparison.OrdinalIgnoreCase))) reasons.Add("UnreviewedMaterialEvidence");
+                }
             }
         }
         foreach (var (label, link) in References(snapshot))
@@ -83,9 +91,8 @@ public static class EquipmentClassifier
             else reasons.Add("UnsupportedWeaponAnimation");
 
             // Diagnostic hints only: never assign a subtype from a mod-defined EditorID.
-            if (snapshot.Keywords.Any(keyword => keyword.EditorId is { } id &&
-                (id.Contains("Rapier", StringComparison.OrdinalIgnoreCase) || id.Contains("Spear", StringComparison.OrdinalIgnoreCase)
-                 || id.Contains("Pike", StringComparison.OrdinalIgnoreCase) || id.Contains("Halberd", StringComparison.OrdinalIgnoreCase))))
+            if (snapshot.Keywords.Any(keyword => !KeywordCatalog.Entries.ContainsKey(keyword.FormKey)
+                && DiagnosticPolicy.CustomSubtype(keyword.EditorId)))
             {
                 category = null;
                 reasons.Add("CustomWeaponSubtypeRequiresReview");
@@ -108,17 +115,37 @@ public static class EquipmentClassifier
                     if (categories.Length > 1 || categories.Any(value => value != category)) reasons.Add("ConflictingArmorCategory");
                     if (snapshot.ShieldFlag == true && category != "Shield") reasons.Add("ConflictingShieldEvidence");
                 }
+                // Vanilla/CC open helmets can occupy hair + circlet without the head bit.
+                // Require canonical helmet identity and an armor type; a bare circlet is insufficient.
+                else if (primary.Length == 0 && mask == ((1u << 1) | (1u << 12))
+                    && snapshot.ArmorType is "HeavyArmor" or "LightArmor"
+                    && categories.Length == 1 && categories[0] == "Helmet")
+                    category = "Helmet";
                 else reasons.Add("UnsupportedSlotCombination");
             }
             else reasons.Add("MissingSlotMask");
+            if (category is not null && snapshot.ShieldFlag == true && category != "Shield") reasons.Add("ConflictingShieldEvidence");
         }
         var materials = Values(known, snapshot.RecordType == "WEAP" ? "WeaponMaterial" : "ArmorMaterial");
-        var material = materials.Length == 1 ? materials[0] : null;
+        var specificMaterials = materials.Where(candidate => !materials.Any(other =>
+            KeywordCatalog.VariantParents.TryGetValue(other, out var parent) && parent == candidate)).ToArray();
+        var material = specificMaterials.Length == 1 ? specificMaterials[0] : null;
         if (material is null) reasons.Add(materials.Length > 1 ? "ConflictingMaterialKeywords" : "UnknownMaterial");
         if (reasons.Any(reason => reason is "ConflictingWeaponCategory" or "ConflictingWeaponSkill" or "ConflictingArmorCategory"
             or "ConflictingArmorType" or "ConflictingShieldEvidence")) category = null;
-        foreach (var reason in reasons) diagnostics.Add(new(reason, Explain(reason)));
+        var scopeReasons = new List<string>();
+        if (snapshot.Playable == false) scopeReasons.Add("NonPlayableOrUnknown");
+        if (snapshot.RecordType == "ARMO" && snapshot.ArmorType == "Clothing") scopeReasons.Add("ClothingOutsideOrdinaryBaseline");
+        if (snapshot.RecordType == "ARMO" && known.Any(k => k.Kind == "Scope" && k.Value == "Jewelry")) scopeReasons.Add("JewelryOutsideOrdinaryAnalysis");
+        if (snapshot.RecordType == "WEAP" && snapshot.AnimationType == "Staff") scopeReasons.Add("StaffAnimationOutsideOrdinaryAnalysis");
+        var expected = scopeReasons.Count > 0;
+        foreach (var reason in reasons)
+            if (!expected || reason is not ("UnknownMaterial" or "UnsupportedSlotCombination" or "UnsupportedWeaponAnimation"))
+                diagnostics.Add(new(reason, Explain(reason)));
+        if (expected) diagnostics.Add(new("ExpectedOutOfScope", "Outside ordinary weapon/armor analysis: " + string.Join(", ", scopeReasons.Order(StringComparer.Ordinal)) + ". Stored classification reasons remain in inventory."));
         if (snapshot.Template is not null) diagnostics.Add(new("TemplateNotEvaluated", "Stored fields only; effective inherited stats are not evaluated."));
+        if (snapshot.Template is not null && string.Equals(snapshot.Template.FormKey, snapshot.FormKey, StringComparison.OrdinalIgnoreCase))
+            diagnostics.Add(new("TemplateSelfReference", "Direct template points to this record; inheritance is not followed."));
         if (snapshot.HasScripts) diagnostics.Add(new("ScriptedEquipment", "Scripts may affect behavior; excluded from ordinary baselines."));
         if (snapshot.Deleted) diagnostics.Add(new("DeletedRecord", "Deleted winning record; excluded from statistical distributions and future comparisons."));
         if (snapshot.Playable != true) diagnostics.Add(new("NonPlayableOrUnknown", "Playability is false or unavailable; excluded from ordinary baselines."));
@@ -131,9 +158,15 @@ public static class EquipmentClassifier
             diagnostics.Add(new("BoundWeapon", "Bound weapon behavior is outside ordinary equipment baselines."));
         var status = category is null ? "Unclassified" : material is null || reasons.Count > 0 ? "Partial" : "Confident";
         var classification = new Classification(category, material, handedness, status,
-            evidence.Distinct().Order(StringComparer.Ordinal).ToArray(), reasons.Distinct().Order(StringComparer.Ordinal).ToArray());
+            evidence.Distinct().Order(StringComparer.Ordinal).ToArray(), reasons.Distinct().Order(StringComparer.Ordinal).ToArray())
+        {
+            MaterialFamily = material is null ? null : KeywordCatalog.Family(material),
+            MaterialVariant = material is not null && KeywordCatalog.Family(material) != material ? material : null,
+            Scope = expected ? "ExpectedOutOfScope" : category is null ? "UnsupportedEquipment" : "OrdinaryEquipment",
+            ScopeReasons = scopeReasons.Distinct().Order(StringComparer.Ordinal).ToArray()
+        };
         var eligibility = GetEligibility(snapshot, classification, diagnostics);
-        return new(snapshot, classification, eligibility, diagnostics.Distinct().OrderBy(d => d.Code, StringComparer.Ordinal)
+        return new(snapshot, classification, eligibility, diagnostics.Select(DiagnosticPolicy.Decorate).Distinct().OrderBy(d => d.Code, StringComparer.Ordinal)
             .ThenBy(d => d.Message, StringComparer.Ordinal).ToArray());
     }
 
@@ -148,8 +181,18 @@ public static class EquipmentClassifier
     {
         var stats = new List<string>();
         var analysis = new List<string>();
+        if (classification.Scope == "ExpectedOutOfScope")
+        {
+            stats.AddRange(classification.ScopeReasons);
+            analysis.AddRange(classification.ScopeReasons);
+        }
         if (snapshot.Deleted) { stats.Add("DeletedRecord"); analysis.Add("DeletedRecord"); }
         if (classification.Status != "Confident") { stats.Add("ClassificationNotConfident"); analysis.Add("ClassificationNotConfident"); }
+        if (classification.Status != "Confident" && classification.Scope != "ExpectedOutOfScope")
+        {
+            stats.AddRange(classification.ReasonCodes);
+            analysis.AddRange(classification.ReasonCodes);
+        }
         // Templated records have stored fields that may not describe their in-game equipment.
         if (snapshot.Template is not null) { stats.Add("TemplateNotEvaluated"); analysis.Add("TemplateNotEvaluated"); }
         if (snapshot.Playable != true) analysis.Add("NonPlayableOrUnknown");
@@ -179,6 +222,7 @@ public static class EquipmentClassifier
         "UnsupportedSlotCombination" => "Slot mask is outside the reviewed primary/ancillary profiles.",
         "MissingTwoHandedSubtype" => "TwoHandAxe animation requires a battleaxe or warhammer keyword to identify subtype.",
         "CustomWeaponSubtypeRequiresReview" => "Custom combat keyword suggests a subtype outside the ordinary catalog; no subtype inferred.",
+        "UnreviewedMaterialEvidence" => "An unreviewed material keyword may describe a distinct tier; reviewed stored material remains visible, but confidence is withheld.",
         _ => reason.StartsWith("Conflicting", StringComparison.Ordinal)
             ? "Structural and/or keyword evidence conflicts; ordinary classification is withheld."
             : "Required structure is unavailable or outside the reviewed categories."

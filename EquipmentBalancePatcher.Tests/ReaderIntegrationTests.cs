@@ -80,9 +80,33 @@ public sealed class ReaderIntegrationTests
         ReportWriter.Json(InventoryAudit.Build([snapshot], [], new()));
 
     [TestMethod]
-    [DataRow(false)]
-    [DataRow(true)]
-    public async Task SynthesisNoPatchNeitherCreatesNorOverwritesPlugin(bool existingOutput)
+    public void TemplateLinksDoNotFlattenStoredWeaponOrArmorFields()
+    {
+        var mod = new SkyrimMod(ModKey.FromNameAndExtension("Test.esp"), SkyrimRelease.SkyrimSE);
+        var parentWeapon = mod.Weapons.AddNew(); parentWeapon.BasicStats = new() { Damage = 7 };
+        var childWeapon = mod.Weapons.AddNew(); childWeapon.BasicStats = new() { Damage = 8 };
+        childWeapon.Template.SetTo(parentWeapon.FormKey);
+        var parentArmor = mod.Armors.AddNew(); parentArmor.ArmorRating = 28;
+        var childArmor = mod.Armors.AddNew(); childArmor.ArmorRating = 25;
+        childArmor.TemplateArmor.SetTo(parentArmor.FormKey);
+        using var cache = mod.ToImmutableLinkCache();
+        var reader = new EquipmentReader(cache);
+        var weapon = reader.ReadWeapon(childWeapon, mod.ModKey);
+        var armor = reader.ReadArmor(childArmor, mod.ModKey);
+        Assert.AreEqual(8d, weapon.Damage); Assert.AreEqual(25d, armor.ArmorRating);
+        Assert.AreEqual("StoredRecord", weapon.StatSemantics);
+        Assert.AreEqual("Resolved", weapon.Template!.Status);
+        Assert.IsFalse(EquipmentClassifier.Classify(weapon).Eligibility.InventoryStatisticsEligible);
+        Assert.IsFalse(EquipmentClassifier.Classify(armor).Eligibility.BaselineEligible);
+        Assert.AreEqual((ushort)7, parentWeapon.BasicStats.Damage); Assert.AreEqual(28f, parentArmor.ArmorRating);
+    }
+
+    [TestMethod]
+    [DataRow(false, false)]
+    [DataRow(true, false)]
+    [DataRow(false, true)]
+    [DataRow(true, true)]
+    public async Task SynthesisNoPatchNeitherCreatesNorOverwritesPlugin(bool existingOutput, bool separateProcess)
     {
         using var directory = new TemporaryDirectory();
         var data = Path.Combine(directory.Path, "Data"); Directory.CreateDirectory(data);
@@ -105,18 +129,43 @@ public sealed class ReaderIntegrationTests
         var outputTime = existingOutput ? File.GetLastWriteTimeUtc(output) : default;
         var ran = false;
         var reports = Path.Combine(directory.Path, "Reports");
-        await SynthesisPipeline.Instance
+        var runArguments = new List<string> { "run-patcher", "--GameRelease", "SkyrimSE",
+            "--DataFolderPath", data, "--LoadOrderFilePath", pluginList, "--OutputPath", output,
+            "--ExtraDataFolder", directory.Path, "--ModKey", "AuditOutput.esp", "--LoadOrderIncludesCreationClub", "true" };
+        if (existingOutput) { runArguments.Add("--SourcePath"); runArguments.Add(output); }
+        int exitCode;
+        if (separateProcess)
+        {
+            File.WriteAllText(Path.Combine(directory.Path, "settings.json"),
+                System.Text.Json.JsonSerializer.Serialize(new Settings { OutputDirectory = reports }));
+            var start = new System.Diagnostics.ProcessStartInfo("dotnet")
+            {
+                UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+                WorkingDirectory = directory.Path
+            };
+            start.ArgumentList.Add(typeof(Program).Assembly.Location);
+            foreach (var argument in runArguments)
+                start.ArgumentList.Add(argument);
+            using var process = System.Diagnostics.Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(30)); }
+            catch { if (!process.HasExited) process.Kill(entireProcessTree: true); throw; }
+            var text = await stdout;
+            exitCode = process.ExitCode;
+            Assert.AreEqual(0, exitCode, await stderr + "\n" + text);
+            Assert.IsTrue(text.Contains("Reports published; audit callback returning normally.", StringComparison.Ordinal));
+            Assert.IsTrue(text.Contains("Synthesis pipeline returned; exit code 0.", StringComparison.Ordinal));
+            ran = true;
+        }
+        else exitCode = await SynthesisPipeline.Instance
             .AddPatch<ISkyrimMod, ISkyrimModGetter>(state =>
             {
                 ran = true;
                 Program.RunAudit(state, new Settings { OutputDirectory = reports });
             }, Program.AuditPreferences())
-            .Run(new RunSynthesisMutagenPatcher
-            {
-                GameRelease = GameRelease.SkyrimSE, DataFolderPath = data, LoadOrderFilePath = pluginList,
-                OutputPath = output, SourcePath = existingOutput ? output : null,
-                ExtraDataFolder = directory.Path, ModKey = "AuditOutput.esp", LoadOrderIncludesCreationClub = true
-            });
+            .Run(runArguments.ToArray()).WaitAsync(TimeSpan.FromSeconds(30));
+        Assert.AreEqual(0, exitCode);
         Assert.IsTrue(ran);
         Assert.IsTrue(Program.AuditPreferences().NoPatch);
         if (beforeOutput is null) Assert.IsFalse(File.Exists(output));
@@ -126,7 +175,7 @@ public sealed class ReaderIntegrationTests
             Assert.AreEqual(outputTime, File.GetLastWriteTimeUtc(output));
         }
         CollectionAssert.AreEqual(inputBytes, File.ReadAllBytes(Path.Combine(data, "Skyrim.esm")));
-        Assert.AreEqual(4, Directory.GetFiles(reports).Length);
+        Assert.AreEqual(5, Directory.GetFiles(reports).Length);
         using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(reports, "audit.json")));
         var observed = json.RootElement.GetProperty("equipment")[0].GetProperty("snapshot");
         Assert.AreEqual(existingOutput ? 14 : 8, observed.GetProperty("damage").GetInt32());

@@ -40,6 +40,7 @@ public static class ReportWriter
             (Name: "equipment-inventory.csv", Text: InventoryCsv(report)),
             (Name: "equipment-groups.csv", Text: GroupsCsv(report)),
             (Name: "classification-issues.csv", Text: IssuesCsv(report)),
+            (Name: "keyword-summary.csv", Text: KeywordsCsv(report)),
             (Name: "audit.json", Text: Json(report))
         };
         var staged = new List<(string Temporary, string Destination)>();
@@ -78,7 +79,8 @@ public static class ReportWriter
             "enchantmentFormKey", "enchantmentEditorId", "enchantmentStatus", "enchantmentAmount", "hasScripts", "hasVirtualMachineAdapter",
             "templateFormKey", "templateEditorId", "templateStatus", "equipmentTypeFormKey", "equipmentTypeEditorId", "equipmentTypeStatus",
             "keywordsJson", "flagsJson", "classificationEvidenceJson", "classificationReasonsJson",
-            "statisticsEligible", "baselineEligible", "analysisEligible", "statisticsReasonsJson", "baselineReasonsJson", "analysisReasonsJson", "diagnosticsJson");
+            "statisticsEligible", "baselineEligible", "analysisEligible", "statisticsReasonsJson", "baselineReasonsJson", "analysisReasonsJson", "diagnosticsJson",
+            "materialFamily", "materialVariant", "scope", "scopeReasonsJson", "statSemantics");
         foreach (var e in report.Equipment)
         {
             var s = e.Snapshot; var c = e.Classification; var eligibility = e.Eligibility;
@@ -89,7 +91,8 @@ public static class ReportWriter
                 s.Template?.FormKey, s.Template?.EditorId, s.Template?.Status, s.EquipmentType?.FormKey, s.EquipmentType?.EditorId, s.EquipmentType?.Status,
                 Compact(s.Keywords), Compact(s.Flags), Compact(c.Evidence), Compact(c.ReasonCodes),
                 eligibility.InventoryStatisticsEligible, eligibility.BaselineEligible, eligibility.AnalysisEligible,
-                Compact(eligibility.InventoryStatisticsReasons), Compact(eligibility.BaselineReasons), Compact(eligibility.AnalysisReasons), Compact(e.Diagnostics));
+                Compact(eligibility.InventoryStatisticsReasons), Compact(eligibility.BaselineReasons), Compact(eligibility.AnalysisReasons), Compact(e.Diagnostics),
+                c.MaterialFamily, c.MaterialVariant, c.Scope, Compact(c.ScopeReasons), s.StatSemantics);
         }
         return text.ToString();
     }
@@ -110,10 +113,22 @@ public static class ReportWriter
     public static string IssuesCsv(AuditReport report)
     {
         var text = new StringBuilder();
-        Row(text, "recordType", "formKey", "editorId", "winningPlugin", "code", "message");
+        Row(text, "recordType", "formKey", "editorId", "winningPlugin", "code", "message", "severity", "relevance");
         foreach (var e in report.Equipment)
             foreach (var d in e.Diagnostics) Row(text, e.Snapshot.RecordType, e.Snapshot.FormKey, e.Snapshot.EditorId,
-                e.Snapshot.WinningPlugin, d.Code, d.Message);
+                e.Snapshot.WinningPlugin, d.Code, d.Message, d.Severity, d.Relevance);
+        return text.ToString();
+    }
+
+    public static string KeywordsCsv(AuditReport report)
+    {
+        var text = new StringBuilder();
+        Row(text, "formKey", "editorIdsJson", "resolutionStatusesJson", "diagnosticCategory", "potentiallyRelevant",
+            "affectedRecords", "recordTypesJson", "originPluginsJson", "winningPluginsJson", "examplesJson");
+        foreach (var k in report.KeywordSummary)
+            Row(text, k.FormKey, Compact(k.EditorIds), Compact(k.ResolutionStatuses), k.DiagnosticCategory,
+                k.PotentiallyRelevant, k.AffectedRecords, Compact(k.RecordTypes), Compact(k.OriginPlugins),
+                Compact(k.WinningPlugins), Compact(k.Examples));
         return text.ToString();
     }
 
@@ -133,7 +148,7 @@ public static class ReportWriter
     {
         var s = report.Summary;
         var text = new StringBuilder();
-        text.AppendLine("Equipment Balance Patcher v0.1a — read-only equipment inventory");
+        text.AppendLine("Equipment Balance Patcher v0.1b — read-only equipment inventory");
         text.AppendLine($"Inspected WEAP: {s.Weapons}; ARMO: {s.Armor}; deleted: {s.Deleted}");
         text.AppendLine($"Classification — confident: {s.Confident}; partial: {s.Partial}; unclassified: {s.Unclassified}");
         text.AppendLine($"Templated: {s.Templated}; enchanted: {s.Enchanted}; scripted: {s.Scripted}; unresolved reference occurrences: {s.UnresolvedReferences}");
@@ -142,6 +157,9 @@ public static class ReportWriter
         foreach (var (category, count) in s.Categories) text.AppendLine($"  {category}: {count}");
         text.AppendLine("Material breakdown (all inventoried records):");
         foreach (var (material, count) in s.Materials) text.AppendLine($"  {material}: {count}");
+        text.AppendLine("Eligibility exclusions by stage/type/reason (overlapping; do not sum):");
+        foreach (var reason in report.EligibilitySummary)
+            text.AppendLine($"  {reason.Stage}/{reason.RecordType}/{reason.ReasonCategory}/{reason.Reason}: {reason.AffectedRecords}");
         text.AppendLine("Reports:");
         foreach (var path in paths) text.AppendLine("  " + path);
         text.AppendLine("No game records modified. No balance evaluation performed.");

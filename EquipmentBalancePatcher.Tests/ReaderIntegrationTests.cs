@@ -201,7 +201,7 @@ public sealed class ReaderIntegrationTests
             Assert.AreEqual(outputTime, File.GetLastWriteTimeUtc(output));
         }
         CollectionAssert.AreEqual(inputBytes, File.ReadAllBytes(Path.Combine(data, "Skyrim.esm")));
-        Assert.AreEqual(8, Directory.GetFiles(reports).Length);
+        Assert.AreEqual(11, Directory.GetFiles(reports).Length);
         using var json = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(reports, "audit.json")));
         var observed = json.RootElement.GetProperty("equipment")[0].GetProperty("snapshot");
         Assert.AreEqual(existingOutput ? 14 : 8, observed.GetProperty("damage").GetInt32());

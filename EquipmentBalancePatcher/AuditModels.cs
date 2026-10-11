@@ -6,6 +6,7 @@ public sealed class Settings
     public string OutputDirectory { get; set; } = "Reports";
     public int MaximumTemplateDepth { get; set; } = TemplateResolver.DefaultMaximumDepth;
     public bool EnableBalanceAudit { get; set; } = true;
+    public bool EnableReferenceComparison { get; set; } = true;
     public int MinimumIndependentPeers { get; set; } = 5;
     public double RobustDeviationThreshold { get; set; } = 3.5;
     public bool IncludeEnchantedAnalysisCandidates { get; set; } = true;
@@ -100,4 +101,6 @@ public sealed record AuditReport(string SchemaVersion, string PatcherVersion, st
     public EffectiveEquipment[] TemplateAnalysis { get; init; } = [];
     public TemplateRootSummary[] TemplateRoots { get; init; } = [];
     public BalanceAnalysis? BalanceAnalysis { get; init; }
+    public ReferenceAnalysis? ReferenceAnalysis { get; init; }
+    public WeaponEvidenceAnalysis? WeaponEvidenceAnalysis { get; init; }
 }

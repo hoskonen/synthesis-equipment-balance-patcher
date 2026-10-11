@@ -196,10 +196,10 @@ public sealed class TemplateTests
             Assert.AreEqual(JsonSerializer.Serialize(independentlyClassified), JsonSerializer.Serialize(e));
         }
         using var directory = new TemporaryDirectory();
-        Assert.AreEqual(8, ReportWriter.Write(one, directory.Path).Length);
+        Assert.AreEqual(11, ReportWriter.Write(one, directory.Path).Length);
         Assert.IsFalse(Directory.GetFiles(directory.Path).Any(f => f.EndsWith(".esp", StringComparison.OrdinalIgnoreCase)));
         using var json = JsonDocument.Parse(ReportWriter.Json(one));
-        Assert.AreEqual("4", json.RootElement.GetProperty("schemaVersion").GetString());
+        Assert.AreEqual("6", json.RootElement.GetProperty("schemaVersion").GetString());
         Assert.AreEqual(1, json.RootElement.GetProperty("templateAnalysis").GetArrayLength());
     }
 }

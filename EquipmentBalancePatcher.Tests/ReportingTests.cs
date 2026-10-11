@@ -106,14 +106,14 @@ public sealed class ReportingTests
     }
 
     [TestMethod]
-    public void ReportWriterTouchesOnlyItsEightReports()
+    public void ReportWriterTouchesOnlyItsElevenReports()
     {
         using var directory = new TemporaryDirectory();
         var plugin = Path.Combine(directory.Path, "EBP.esp");
         byte[] sentinel = [1, 2, 3, 4];
         File.WriteAllBytes(plugin, sentinel);
         var paths = ReportWriter.Write(Build(ClassificationTests.Weapon()), directory.Path);
-        Assert.AreEqual(8, paths.Length);
+        Assert.AreEqual(11, paths.Length);
         CollectionAssert.AreEqual(sentinel, File.ReadAllBytes(plugin));
         Assert.IsFalse(Directory.GetFiles(directory.Path).Any(p => p.EndsWith(".tmp", StringComparison.Ordinal)));
         Assert.AreEqual(ReportWriter.Json(Build(ClassificationTests.Weapon())), File.ReadAllText(Path.Combine(directory.Path, "audit.json")));

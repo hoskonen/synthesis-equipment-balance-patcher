@@ -2,8 +2,8 @@ namespace EquipmentBalancePatcher;
 
 public static class InventoryAudit
 {
-    public const string PatcherVersion = "0.1e";
-    public const string SchemaVersion = "4";
+    public const string PatcherVersion = "0.1h";
+    public const string SchemaVersion = "6";
     public const string ClassificationVersion = "2";
 
     public static AuditReport Build(IEnumerable<EquipmentSnapshot> snapshots, IEnumerable<InputPlugin> inputs,
@@ -65,6 +65,8 @@ public static class InventoryAudit
                     children.Select(c => c.WinningPlugin).Distinct().Order(StringComparer.Ordinal).ToArray(),
                     children.Select(c => c.FormKey).Order(StringComparer.Ordinal).ToArray(), "UnvalidatedDesignFamily_NoBaselineCreated");
             }).ToArray();
+        var balance = BalanceAudit.Build(equipment, settings, cancel);
+        var references = ReferenceComparison.Build(equipment, settings, balance.Summary.AnalyzedRecords, cancel);
         return new(SchemaVersion, PatcherVersion, ClassificationVersion, "0.54.4", "0.36.6", "English",
             System.Text.Json.JsonSerializer.Deserialize<Settings>(System.Text.Json.JsonSerializer.Serialize(settings))!, inputs.ToArray(), summary, equipment, groups, issues)
         {
@@ -72,7 +74,9 @@ public static class InventoryAudit
             EligibilitySummary = AggregateEligibility(equipment),
             TemplateAnalysis = templates,
             TemplateRoots = roots,
-            BalanceAnalysis = BalanceAudit.Build(equipment, settings, cancel)
+            BalanceAnalysis = balance,
+            ReferenceAnalysis = references,
+            WeaponEvidenceAnalysis = WeaponEvidenceAudit.Build(equipment, references, cancel)
         };
     }
 

@@ -44,6 +44,9 @@ public static class ReportWriter
             (Name: "template-analysis.csv", Text: TemplatesCsv(report)),
             (Name: "balance-findings.csv", Text: BalanceFindingsCsv(report)),
             (Name: "balance-groups.csv", Text: BalanceGroupsCsv(report)),
+            (Name: "reference-comparisons.csv", Text: ReferenceComparisonsCsv(report)),
+            (Name: "weapon-evidence.csv", Text: WeaponEvidenceCsv(report)),
+            (Name: "WeaponDryRun.txt", Text: WeaponDryRunReport.Render(report)),
             (Name: "audit.json", Text: Json(report))
         };
         var staged = new List<(string Temporary, string Destination)>();
@@ -151,6 +154,54 @@ public static class ReportWriter
         return text.ToString();
     }
 
+    public static string WeaponEvidenceCsv(AuditReport report)
+    {
+        var text = new StringBuilder();
+        Row(text, "formKey", "editorId", "name", "definingPlugin", "winningPlugin", "subtype", "animationType", "flagsJson",
+            "playable", "hasScripts", "templateFormKey", "classificationStatus", "classifiedMaterial", "baselineEligible", "analysisEligible",
+            "ordinaryInspected", "evidenceStatus", "evidenceConfidence", "materialKeywordsJson", "keywordMaterialsJson", "keywordStatus",
+            "nameMaterialsJson", "nameAgreement", "craftingEvidenceStatus", "referenceFormKey", "referenceName", "referenceWinningPlugin",
+            "referenceStatus", "referenceMetricsJson", "reasonsJson");
+        var equipment = report.Equipment.ToDictionary(e => e.Snapshot.FormKey, StringComparer.OrdinalIgnoreCase);
+        var references = (report.ReferenceAnalysis?.Catalog ?? []).ToDictionary(r => r.Identity.FormKey, StringComparer.OrdinalIgnoreCase);
+        foreach (var r in report.WeaponEvidenceAnalysis?.Records ?? [])
+        {
+            var e = equipment[r.FormKey]; var s = e.Snapshot;
+            var reference = r.ReferenceFormKey is null ? null : references[r.ReferenceFormKey];
+            Row(text, s.FormKey, s.EditorId, s.Name, s.DefiningPlugin, s.WinningPlugin, e.Classification.Category, s.AnimationType,
+                Compact(s.Flags), s.Playable, s.HasScripts, s.Template?.FormKey, e.Classification.Status, e.Classification.Material,
+                e.Eligibility.BaselineEligible, e.Eligibility.AnalysisEligible, r.OrdinaryInspected, r.Status, r.Confidence,
+                Compact(r.MaterialKeywords), Compact(r.KeywordMaterials), r.KeywordStatus, Compact(r.NameMaterials), r.NameAgreement,
+                r.CraftingEvidenceStatus, r.ReferenceFormKey, reference?.Identity.Name, reference?.WinningPlugin, r.ReferenceStatus,
+                Compact(r.ReferenceMetrics), Compact(r.Reasons));
+        }
+        return text.ToString();
+    }
+
+    public static string ReferenceComparisonsCsv(AuditReport report)
+    {
+        var text = new StringBuilder();
+        Row(text, "formKey", "editorId", "name", "definingPlugin", "winningPlugin", "recordType", "category", "material", "armorType",
+            "referenceFormKey", "referenceName", "referenceWinningName", "referenceWinningPlugin", "metric", "candidateValue", "referenceValue",
+            "signedDifference", "absoluteDifference", "percentageDifference", "comparisonStatus", "recordStatus", "reasonsJson");
+        if (report.ReferenceAnalysis is not { } analysis) return text.ToString();
+        var equipment = report.Equipment.ToDictionary(e => e.Snapshot.FormKey, StringComparer.OrdinalIgnoreCase);
+        var references = analysis.Catalog.ToDictionary(r => r.Identity.FormKey, StringComparer.OrdinalIgnoreCase);
+        foreach (var result in analysis.Records.Where(r => r.Status != "Excluded"))
+        {
+            var e = equipment[result.FormKey]; var s = e.Snapshot;
+            var reference = result.ReferenceFormKey is null ? null : references[result.ReferenceFormKey];
+            void Write(ReferenceMetric? metric) => Row(text, s.FormKey, s.EditorId, s.Name, s.DefiningPlugin, s.WinningPlugin,
+                s.RecordType, e.Classification.Category, e.Classification.Material, s.ArmorType, result.ReferenceFormKey,
+                reference?.Identity.Name, reference?.WinningName, reference?.WinningPlugin, metric?.Metric, metric?.CandidateValue,
+                metric?.ReferenceValue, metric?.SignedDifference, metric?.AbsoluteDifference, metric?.PercentageDifference,
+                metric?.Status ?? result.Status, result.Status, Compact(result.Reasons.Concat(metric?.Reasons ?? []).Distinct().Order(StringComparer.Ordinal).ToArray()));
+            if (result.Metrics.Length == 0) Write(null);
+            else foreach (var metric in result.Metrics) Write(metric);
+        }
+        return text.ToString();
+    }
+
     public static string BalanceFindingsCsv(AuditReport report)
     {
         var text = new StringBuilder();
@@ -200,31 +251,13 @@ public static class ReportWriter
 
     public static string ConsoleSummary(AuditReport report, IEnumerable<string> paths)
     {
-        var s = report.Summary;
         var text = new StringBuilder();
-        text.AppendLine("Equipment Balance Patcher v0.1e — read-only inventory, template prototype and independent balance audit");
-        text.AppendLine($"Inspected WEAP: {s.Weapons}; ARMO: {s.Armor}; deleted: {s.Deleted}");
-        text.AppendLine($"Classification — confident: {s.Confident}; partial: {s.Partial}; unclassified: {s.Unclassified}");
-        text.AppendLine($"Templated: {s.Templated}; enchanted: {s.Enchanted}; scripted: {s.Scripted}; unresolved reference occurrences: {s.UnresolvedReferences}");
-        text.AppendLine($"Statistics eligible: {s.StatisticsEligible}; baseline eligible: {s.BaselineEligible}; baseline excluded: {s.BaselineExcluded}");
-        text.AppendLine($"Template investigation — resolved chains: {report.TemplateAnalysis.Count(t => t.Chain.Status == "Resolved")}; failed chains: {report.TemplateAnalysis.Count(t => t.Chain.Status != "Resolved")}; shared-root families: {report.TemplateRoots.Count(r => r.TemplatedVariants > 1)}");
-        text.AppendLine("Proposed inherited values and hypothetical eligibility are unvalidated; production classification/eligibility still use stored values.");
-        text.AppendLine("Category breakdown (all inventoried records):");
-        foreach (var (category, count) in s.Categories) text.AppendLine($"  {category}: {count}");
-        text.AppendLine("Material breakdown (all inventoried records):");
-        foreach (var (material, count) in s.Materials) text.AppendLine($"  {material}: {count}");
-        text.AppendLine("Eligibility exclusions by stage/type/reason (overlapping; do not sum):");
-        foreach (var reason in report.EligibilitySummary)
-            text.AppendLine($"  {reason.Stage}/{reason.RecordType}/{reason.ReasonCategory}/{reason.Reason}: {reason.AffectedRecords}");
-        text.AppendLine("Reports:");
-        foreach (var path in paths) text.AppendLine("  " + path);
+        text.Append(FormattableString.Invariant($"Inventory: {report.Summary.Weapons} WEAP; {report.Summary.Armor} ARMO; {report.Summary.Templated} templated records.\n"));
         if (report.BalanceAnalysis is { } balance)
-        {
-            var b = balance.Summary;
-            text.AppendLine($"Balance — enabled: {balance.Enabled}; eligible: {b.EligibilityCandidates}; enabled candidates: {b.EnabledCandidates}; analyzed with sufficient unconcentrated peers: {b.AnalyzedRecords}; excluded: {b.ExcludedRecords}; insufficient evidence: {b.InsufficientEvidenceRecords}; insufficient peers/no reference: {b.InsufficientPeerRecords}; invalid metrics: {b.InvalidMetricRecords}");
-            text.AppendLine($"Provisional findings: {b.StatisticalFindings}; potential consistency issues: {b.PotentialConsistencyIssues}; insufficient-evidence findings: {b.InsufficientEvidenceFindings}. Statistical differences require manual review.");
-        }
-        text.AppendLine("No game records modified. Stored independent values only; no stat recommendations or automatic balancing.");
+            text.Append(FormattableString.Invariant($"Statistical audit: {balance.Summary.AnalyzedRecords} supported records; {balance.Summary.StatisticalFindings} provisional metric findings.\n"));
+        text.Append("Reports:\n");
+        foreach (var path in paths) text.Append("  ").Append(path).Append('\n');
+        text.Append('\n').Append(WeaponDryRunReport.Render(report));
         return text.ToString();
     }
 }

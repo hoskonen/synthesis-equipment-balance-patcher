@@ -180,7 +180,7 @@ public sealed class BalanceTests
             Assert.AreEqual(ReportWriter.BalanceFindingsCsv(one), ReportWriter.BalanceFindingsCsv(two));
             Assert.AreEqual(ReportWriter.BalanceGroupsCsv(one), ReportWriter.BalanceGroupsCsv(two));
             using var directory = new TemporaryDirectory();
-            Assert.AreEqual(8, ReportWriter.Write(one, directory.Path).Length);
+            Assert.AreEqual(11, ReportWriter.Write(one, directory.Path).Length);
             Assert.IsFalse(Directory.GetFiles(directory.Path).Any(p => p.EndsWith(".esp") || p.EndsWith(".esl")));
             using var parser = new Microsoft.VisualBasic.FileIO.TextFieldParser(new StringReader(ReportWriter.BalanceFindingsCsv(one)))
                 { TextFieldType = Microsoft.VisualBasic.FileIO.FieldType.Delimited, HasFieldsEnclosedInQuotes = true };
